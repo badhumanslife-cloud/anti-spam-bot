@@ -2,8 +2,8 @@ const STATUS_TEXT = "🛡 Шлюхобот активен. Модерация р
 
 const GROQ_MODEL = "qwen/qwen3.8-27b";
 const AI_CONFIDENCE_THRESHOLD = 0.90;
-const WATCH_GIF_URL = "https://c.tenor.com/dZ0XeQdxeFsAAAAd/tenor.gif";
-const WATCH_GIF_CAPTION = "ШЛЮХОБОД БДИТ";
+const WATCH_GIF_URL = "https://media1.tenor.com/m/rkiOiSpabxUAAAAC/cat.gif";
+const WATCH_GIF_CAPTION = "😎АНТИ-ШЛЮХОБОД БДИТ";
 const TELEGRAM_MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
 const MEDIA_MAX_DURATION_SECONDS = 600;
 const MEDIA_FRAME_WIDTH = 768;
