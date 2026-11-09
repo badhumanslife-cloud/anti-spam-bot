@@ -1,0 +1,8 @@
+name = "shluhobot"
+main = "worker.js"
+compatibility_date = "2026-11-09"
+
+# Configure this binding with your existing Cloudflare KV namespace ID:
+# [[kv_namespaces]]
+# binding = "BOT_DATA"
+# id = "YOUR_KV_NAMESPACE_ID"
