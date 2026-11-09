@@ -100,6 +100,43 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+async function runMediaOutput(env, bytes, outputOptions) {
+  const rpcObjects = [];
+
+  try {
+    const input = env.MEDIA.input(streamFromBytes(bytes));
+    rpcObjects.push(input);
+
+    const transformed = input.transform({ width: MEDIA_FRAME_WIDTH });
+    if (!rpcObjects.includes(transformed)) rpcObjects.push(transformed);
+
+    const output = transformed.output(outputOptions);
+    if (!rpcObjects.includes(output)) rpcObjects.push(output);
+
+    const response = await output.response();
+
+    if (!response.ok) {
+      return { ok: false, status: response.status, bytes: null };
+    }
+
+    const resultBytes = new Uint8Array(await response.arrayBuffer());
+    return { ok: true, status: response.status, bytes: resultBytes };
+  } finally {
+    // Media Transformations uses RPC-backed objects; explicitly release
+    // each unique object after its output has been fully read.
+    if (typeof Symbol.dispose === "symbol") {
+      for (const rpcObject of rpcObjects.reverse()) {
+        try {
+          const dispose = rpcObject?.[Symbol.dispose];
+          if (typeof dispose === "function") dispose.call(rpcObject);
+        } catch (error) {
+          console.warn("Не удалось освободить Media RPC object:", String(error));
+        }
+      }
+    }
+  }
+}
+
 async function extractTelegramMediaFrames(message, env) {
   const media = getMediaInfo(message);
   if (!media) return [];
@@ -140,34 +177,36 @@ async function extractTelegramMediaFrames(message, env) {
       return [];
     }
 
-    if (media.durationUnknown) {
-      // Для GIF/MP4, отправленных как документ, Telegram не передаёт duration.
-      // В этом случае делаем контактный лист из нескольких кадров.
-      const sheet = env.MEDIA.input(streamFromBytes(bytes))
-        .transform({ width: MEDIA_FRAME_WIDTH })
-        .output({ mode: "spritesheet", imageCount: 3 });
-
-      const sheetResponse = await sheet.response();
-      if (!sheetResponse.ok) {
-        console.error("Cloudflare Media не создал контактный лист:", sheetResponse.status);
-        return [];
-      }
-
-      const sheetBytes = new Uint8Array(await sheetResponse.arrayBuffer());
-      if (!sheetBytes.length) return [];
-
-      console.log("Media inspected:", media.type, "spritesheet: 3 frames");
-      return ["data:image/jpeg;base64," + bytesToBase64(sheetBytes)];
-    }
-
     const reportedDuration = Number(media.duration) || 1;
-    if (reportedDuration > MEDIA_MAX_DURATION_SECONDS) {
+    if (!media.durationUnknown && reportedDuration > MEDIA_MAX_DURATION_SECONDS) {
       console.warn("Медиа пропущено: длительность больше лимита Cloudflare Media Transformations 10 минут.");
       return [];
     }
-    const duration = Math.max(1, reportedDuration);
 
-    const lastSecond = Math.max(0, Math.floor(duration) - 1);
+    // Анимации/GIF и очень короткие видео лучше передавать контактным листом:
+    // imageCount=3 выбирает три кадра даже если duration меньше одной секунды.
+    if (
+      media.type === "GIF/animation" ||
+      media.durationUnknown ||
+      reportedDuration < 3
+    ) {
+      const sheet = await runMediaOutput(env, bytes, {
+        mode: "spritesheet",
+        imageCount: 3,
+      });
+
+      if (!sheet.ok) {
+        console.error("Cloudflare Media не создал контактный лист:", sheet.status);
+        return [];
+      }
+      if (!sheet.bytes?.length) return [];
+
+      console.log("Media inspected:", media.type, "spritesheet with 3 samples");
+      return ["data:image/jpeg;base64," + bytesToBase64(sheet.bytes)];
+    }
+
+    const duration = Math.max(3, reportedDuration);
+    const lastSecond = Math.max(2, Math.floor(duration) - 1);
     const timestamps = [...new Set([
       0,
       Math.floor(lastSecond / 2),
@@ -177,24 +216,19 @@ async function extractTelegramMediaFrames(message, env) {
     const frameResults = await Promise.all(
       timestamps.map(async (second) => {
         try {
-          const transformed = env.MEDIA.input(streamFromBytes(bytes))
-            .transform({ width: MEDIA_FRAME_WIDTH })
-            .output({
-              mode: "frame",
-              time: String(second) + "s",
-              format: "jpg",
-            });
+          const frame = await runMediaOutput(env, bytes, {
+            mode: "frame",
+            time: String(second) + "s",
+            format: "jpg",
+          });
 
-          const frameResponse = await transformed.response();
-          if (!frameResponse.ok) {
-            console.error("Cloudflare Media не извлёк кадр:", second, frameResponse.status);
+          if (!frame.ok) {
+            console.error("Cloudflare Media не извлёк кадр:", second, frame.status);
             return null;
           }
+          if (!frame.bytes?.length) return null;
 
-          const frameBytes = new Uint8Array(await frameResponse.arrayBuffer());
-          if (!frameBytes.length) return null;
-
-          return "data:image/jpeg;base64," + bytesToBase64(frameBytes);
+          return "data:image/jpeg;base64," + bytesToBase64(frame.bytes);
         } catch (error) {
           console.error("Ошибка извлечения кадра на " + second + "s:", String(error));
           return null;
