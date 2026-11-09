@@ -139,10 +139,12 @@ async function extractTelegramMediaFrames(message, env) {
       return [];
     }
 
-    const duration = Math.max(
-      1,
-      Math.min(Number(media.duration) || 1, MEDIA_MAX_DURATION_SECONDS)
-    );
+    const reportedDuration = Number(media.duration) || 1;
+    if (reportedDuration > MEDIA_MAX_DURATION_SECONDS) {
+      console.warn("Медиа пропущено: длительность больше лимита Cloudflare Media Transformations 10 минут.");
+      return [];
+    }
+    const duration = Math.max(1, reportedDuration);
 
     const lastSecond = Math.max(0, Math.floor(duration) - 1);
     const timestamps = [...new Set([
