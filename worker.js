@@ -70,7 +70,8 @@ function getMediaInfo(message) {
     ) {
       return {
         fileId: document.file_id,
-        duration: 1,
+        duration: null,
+        durationUnknown: true,
         type: "media document",
       };
     }
@@ -137,6 +138,26 @@ async function extractTelegramMediaFrames(message, env) {
     if (bytes.byteLength > TELEGRAM_MAX_DOWNLOAD_BYTES) {
       console.warn("Медиа пропущено: скачанный файл превышает 20 MB.");
       return [];
+    }
+
+    if (media.durationUnknown) {
+      // Для GIF/MP4, отправленных как документ, Telegram не передаёт duration.
+      // В этом случае делаем контактный лист из нескольких кадров.
+      const sheet = env.MEDIA.input(streamFromBytes(bytes))
+        .transform({ width: MEDIA_FRAME_WIDTH })
+        .output({ mode: "spritesheet", imageCount: 3 });
+
+      const sheetResponse = await sheet.response();
+      if (!sheetResponse.ok) {
+        console.error("Cloudflare Media не создал контактный лист:", sheetResponse.status);
+        return [];
+      }
+
+      const sheetBytes = new Uint8Array(await sheetResponse.arrayBuffer());
+      if (!sheetBytes.length) return [];
+
+      console.log("Media inspected:", media.type, "spritesheet: 3 frames");
+      return ["data:image/jpeg;base64," + bytesToBase64(sheetBytes)];
     }
 
     const reportedDuration = Number(media.duration) || 1;
