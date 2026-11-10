@@ -489,6 +489,26 @@ async function handleMessage(message, env) {
     return;
   }
 
+  // Приветствуем только начало обсуждения: первый комментарий,
+  // который напрямую отвечает на автоматически пересланный пост канала.
+  const discussionRoot = message.reply_to_message;
+  if (!discussionRoot?.is_automatic_forward || !discussionRoot.message_id) {
+    return;
+  }
+
+  // Один GIF на одну публикацию канала, даже если под ней много комментариев.
+  const greetingKey =
+    "chat:" + chatId + ":discussion:" + discussionRoot.message_id + ":greeted";
+
+  if (await env.BOT_DATA.get(greetingKey)) {
+    return;
+  }
+
+  // Маркер с TTL, чтобы не засорять KV старыми обсуждениями.
+  await env.BOT_DATA.put(greetingKey, "true", {
+    expirationTtl: 60 * 60 * 24 * 30,
+  });
+
   const announcement = await telegram(env, "sendAnimation", {
     chat_id: chatId,
     animation: WATCH_GIF_URL,
@@ -500,6 +520,7 @@ async function handleMessage(message, env) {
   });
 
   if (!announcement.ok) {
+    await env.BOT_DATA.delete(greetingKey);
     console.error("Не удалось отправить GIF:", announcement);
   }
 }
